@@ -8,7 +8,7 @@ def getAtmDensity(height):          #returns atmospheric density as a function o
     return 1.225*(1 - 0.0065*height/288.15)**(9.81*0.0289644/(8.31447 * 0.0065))
 
 def getWind(arguments):             #use balloon descent API to extract x,y position during ascent
-    url = 'http://predict.cusf.co.uk/api/v1/?'#     .format(host=socket.gethostbyname("predict.cusf.co.uk"))
+    url = 'http://predict.cusf.co.uk/api/v1/?'  #.format(host=socket.gethostbyname("predict.cusf.co.uk"))
     for arg, value in arguments.items():
         url += arg + '=' + str(value) + '&'
 
@@ -53,7 +53,7 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
     wind = getWind(info)
     xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False, fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
     ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
-    wind_disp1 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))
+    wind_disp1 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape to enable addition
     last_val = wind_disp1[-1]
     wind_disp1 = np.vstack((wind_disp1,np.zeros((len(positions)-len(wind_disp1),3))))
 
@@ -65,7 +65,7 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
     xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
     ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
 
-    wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))
+    wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape to enable addition
     wind_disp2 = np.vstack((np.zeros((len(positions)-len(wind_disp2),3)),np.add(wind_disp2,np.subtract(last_val,wind_disp2[0])))) 
 
     wind = np.add(wind_disp1,wind_disp2) * 1.0      #factor sets wind effect
