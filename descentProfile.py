@@ -49,7 +49,7 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
 
     #wind displacement before chute opens
     info['burst_altitude'] = positions[0,2]
-    info['descent_rate'] = (positions[0,2] - positions[int(chute_deploy_time/dt),2] )/ chute_deploy_time
+    info['descent_rate'] = (positions[0,2] - positions[index_chute_opens,2] )/ chute_deploy_time
     wind = getWind(info)
     xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False, fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
     ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
@@ -74,7 +74,7 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
 
 init_alt = 15000
 position = np.array([0,0,init_alt], dtype='float32')    #m
-velocity = np.array([5,0,0], dtype='float32')           #m/s
+velocity = np.array([1,0,0], dtype='float32')           #m/s
 
 dt = 0.05                               #s
 dry_mass = 50                           #kg
