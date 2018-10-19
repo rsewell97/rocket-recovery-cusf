@@ -17,7 +17,7 @@ python descentProfile.py
 
 Not in any particular order
 
-- [ ] Create a command line argument parser
+- [x] Create a command line argument parser
 - [ ] More accurately model snatch load mechanics robustly
 - [x] Add drag to rocket
 - [ ] Quantify wind effect on rocket dependant mass
