@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import socket, requests, json, datetime, time, geocoder, math
+import socket, requests, json, datetime, time, geocoder, math, argparse
 from scipy import interpolate
 
 def getAtmDensity(alt):          #returns atmospheric density as a function of altitude
@@ -46,6 +46,10 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
 
     if mypos[0] > 90 or mypos[0] < -90:
         raise ValueError('Latitude out of bounds')
+    if dt < 0:
+        raise ValueError("Can't have negative time step")
+    if chute_deploy_time > len(positions)/dt:
+        print("Main parachute didn't open")
 
     info = {                                    #see http://tawhiri.cusf.co.uk/en/latest/api.html for details
         "profile": "standard_profile",
@@ -78,27 +82,39 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
     wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
     wind_disp2 = np.vstack((np.zeros((len(positions)-len(wind_disp2),3)),np.add(wind_disp2,np.subtract(last_val,wind_disp2[0])))) 
 
-    wind = np.add(wind_disp1,wind_disp2) * 1.0      #factor sets wind effect
+    wind = np.add(wind_disp1,wind_disp2) * 1.0      #factor sets wind effect relative to 2kg balloon payload
 
     return np.add(positions,wind)                   #overestimate on displacement as model is designed for low-mass balloon models
 
-init_alt = 15000
-position = np.array([0,0,init_alt], dtype='float32')    #m
-velocity = np.array([0,0,0], dtype='float32')           #m/s
+parser = argparse.ArgumentParser()
+parser.add_argument('-ia','--initalt',default=15000,type=float,help='apogee altitude')
+parser.add_argument('-t','--dt',default=0.05,type=float,help='time step')
+parser.add_argument('-m','--mass',default=50,type=float,help='dry mass at apogee')
+parser.add_argument('-v','--velocity',default=[0,0,0],type=list,help='initial velocity at apogee')
+parser.add_argument('-da','--deployalt',default=1500,type=float,help='altitude main chute opens')
+parser.add_argument('-dD','--drogueD',default=0.9,type=float,help='diameter of drogue')
+parser.add_argument('-cD','--chuteD',default=4.86,type=float,help='diameter of main chute')
+parser.add_argument('-ot','--opentime',default=2,type=float,help='assuming chute opens linearly, what is the duration is secs')
 
-dt = 0.05                               #s
-dry_mass = 50                           #kg
-drogue_drag_coeff = 2.2                 #perhaps optimistic
-drogue_area = np.pi * 0.45**2           #m^2
-chute_drag_coeff = 2.2                  #perhaps optimistic
-chute_area = np.pi * 2.43**2            #m^2
-chute_deployment_duration = 2           #s     assume chute opens linearly - work around but pretty good estimate
+args = parser.parse_args()
 
+#input parameters
+init_alt = args.initalt
+velocity = np.array(args.velocity, dtype='float32')   #m/s
+dt = args.dt                                #s
+dry_mass = args.mass                        #kg
+chute_deployment_altitude = args.deployalt  #m
+drogue_area = np.pi * (args.drogueD/2)**2   #m^2
+chute_area = np.pi * (args.chuteD/2)**2     #m^2
+chute_deployment_duration = args.opentime   #s     assume chute opens linearly - work around but pretty good estimate
+drogue_drag_coeff = 2.2                     #perhaps optimistic
+chute_drag_coeff = 2.2                      #perhaps optimistic
 
+#initialise simulation
 drogue_open = 1                         #initially deployed at apogee (start)          
 chute_open = 0                          #initially not deployed
-chute_deployment_altitude = 1500        #m
-elapsed_time = 0                        #to extract event timings
+elapsed_time = 0                        #used to extract event timings
+position = np.array([0,0,init_alt], dtype='float32')    #m
 positions = np.array([position])
 velocities = np.array([velocity])
 accelerations = np.array([0,0,0])       #initially experiencing 'zero-G'
@@ -131,8 +147,8 @@ while position[2] > 0:                  #run iteration
 
     #rocket drag mechanics
     rocket_drag = 0.5*0.82*np.pi*0.178**2*rho*np.linalg.norm(velocity)**2
-                #0.5 * drag coeff of cyliner * cross sectional area * density * v^2
-    force_sum -= rocket_drag*unit_velocity
+                #0.5 * drag coeff of long cyliner * cross sectional area * density * v^2
+    force_sum -= rocket_drag * unit_velocity
 
     #linear mechanics
     accel = force_sum/dry_mass
