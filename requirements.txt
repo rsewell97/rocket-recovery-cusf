@@ -1,8 +1,6 @@
 matplotlib
 numpy
 requests
-json
 datetime
-time
 geocoder
 scipy
