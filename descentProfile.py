@@ -1,17 +1,27 @@
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import socket, requests, json, datetime, time, geocoder
+import socket, requests, json, datetime, time, geocoder, math
 from scipy import interpolate
 
-def getAtmDensity(height):          #returns atmospheric density as a function of height
-    return 1.225*(1 - 0.0065*height/288.15)**(9.81*0.0289644/(8.31447 * 0.0065))
+def getAtmDensity(alt):          #returns atmospheric density as a function of altitude
+    temp = pressure = 0.0           #see https://www.grc.nasa.gov/WWW/K-12/airplane/atmosmet.html
+    if alt > 25000:
+        temp = -131.21 + 0.00299 * alt
+        pressure = 2.488 * ((temp + 273.1)/(216.6)) ** (-11.388)
+    elif 11000 < alt <= 25000:
+        temp = -56.46
+        pressure = 22.65 * math.exp(1.73 - 0.000157 * alt)
+    else:
+        temp = 15.04 - 0.00649 * alt
+        pressure = 101.29 * ((temp + 273.1)/288.08) ** (5.256)
+    return pressure / (0.2869*(temp + 273.1))
 
 def getWind(arguments):             #use balloon descent API to extract x,y position during ascent
     url = 'http://predict.cusf.co.uk/api/v1/?'  #.format(host=socket.gethostbyname("predict.cusf.co.uk"))
     for arg, value in arguments.items():
         url += arg + '=' + str(value) + '&'
-
+    print(url)
     response = requests.get(url)
     json_data = json.loads(response.text)
     # print(json.dumps(json_data,indent=4),url)
@@ -25,8 +35,8 @@ def getWind(arguments):             #use balloon descent API to extract x,y posi
             lat = des['latitude']-inilat              #normalise from apogee
             lon = des['longitude']-inilon
             
-            x = 6371000*np.sin(np.deg2rad(lon))       #sin(x) = x, 6371000m=radius of earth
-            y = 6371000*np.sin(np.deg2rad(lat))
+            x = (6371000+des['altitude'])*np.sin(np.deg2rad(lon))       #sin(x) = x, 6371000m=radius of earth
+            y = (6371000+des['altitude'])*np.sin(np.deg2rad(lat))
             data.append([x,y,des['altitude']])
 
     return np.asarray(data, dtype='float32')  #array in form [x,y,altitude] over time -> need to interpolate
@@ -53,7 +63,7 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
     wind = getWind(info)
     xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False, fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
     ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
-    wind_disp1 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape to enable addition
+    wind_disp1 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
     last_val = wind_disp1[-1]
     wind_disp1 = np.vstack((wind_disp1,np.zeros((len(positions)-len(wind_disp1),3))))
 
@@ -65,7 +75,7 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
     xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
     ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
 
-    wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape to enable addition
+    wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
     wind_disp2 = np.vstack((np.zeros((len(positions)-len(wind_disp2),3)),np.add(wind_disp2,np.subtract(last_val,wind_disp2[0])))) 
 
     wind = np.add(wind_disp1,wind_disp2) * 1.0      #factor sets wind effect
@@ -74,7 +84,7 @@ def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch
 
 init_alt = 15000
 position = np.array([0,0,init_alt], dtype='float32')    #m
-velocity = np.array([1,0,0], dtype='float32')           #m/s
+velocity = np.array([0,0,0], dtype='float32')           #m/s
 
 dt = 0.05                               #s
 dry_mass = 50                           #kg
@@ -99,6 +109,11 @@ while position[2] > 0:                  #run iteration
     force_sum = np.array([0,0,-dry_mass*9.81], dtype='float32') #N
     rho = getAtmDensity(position[2])
 
+    if np.sqrt((np.sum(velocity**2))) != 0:     #check if velocity != [0,0,0]
+        unit_velocity = (velocity / np.sqrt((np.sum(velocity**2))))
+    else:
+        unit_velocity = velocity
+
     if position[2] < chute_deployment_altitude and chute_open < 1:
         chute_open += dt/chute_deployment_duration      #assume chute opens linearly
         chute_deploy_time = elapsed_time
@@ -106,14 +121,18 @@ while position[2] > 0:                  #run iteration
 
     #drogue mechanics
     d_drag = drogue_open*0.5*drogue_drag_coeff*drogue_area*rho*np.linalg.norm(velocity)**2
-    force_sum -= d_drag*(velocity / np.sqrt((np.sum(velocity**2))))
+    force_sum -= d_drag*unit_velocity
     drogue_force = np.vstack((drogue_force,[d_drag]))
 
     #parachute mechanics
     c_drag = chute_open*0.5*chute_drag_coeff*chute_area*rho*np.linalg.norm(velocity)**2
-    force_sum -= c_drag*(velocity / np.sqrt((np.sum(velocity**2))))
+    force_sum -= c_drag*unit_velocity
     chute_force = np.vstack((chute_force,[c_drag]))
 
+    #rocket drag mechanics
+    rocket_drag = 0.5*0.82*np.pi*0.178**2*rho*np.linalg.norm(velocity)**2
+                #0.5 * drag coeff of cyliner * cross sectional area * density * v^2
+    force_sum -= rocket_drag*unit_velocity
 
     #linear mechanics
     accel = force_sum/dry_mass
