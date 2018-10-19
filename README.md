@@ -19,10 +19,10 @@ Not in any particular order
 
 - [ ] Create a command line argument parser
 - [ ] More accurately model snatch load mechanics robustly
-- [ ] Add drag to rocket
+- [x] Add drag to rocket
 - [ ] Quantify wind effect on rocket dependant mass
 - [ ] Add rocket orientaion physics
-- [ ] Fix bug when velocity == 0
+- [x] Fix bug when velocity == 0
 
 
 Please message me if you have other suggestions
