@@ -24,6 +24,31 @@ Not in any particular order
 - [ ] Add rocket orientaion physics
 - [x] Fix bug when velocity == 0
 
+### Command Line Arguments
+
+```
+usage: descentProfile.py [-h] [-ia INITALT] [-t DT] [-m MASS] [-v VELOCITY]
+                         [-da DEPLOYALT] [-dD DROGUED] [-cD CHUTED]
+                         [-ot OPENTIME]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -ia INITALT, --initalt INITALT
+                        apogee altitude
+  -t DT, --dt DT        time step
+  -m MASS, --mass MASS  dry mass at apogee
+  -v VELOCITY, --velocity VELOCITY
+                        initial velocity at apogee
+  -da DEPLOYALT, --deployalt DEPLOYALT
+                        altitude main chute opens
+  -dD DROGUED, --drogueD DROGUED
+                        diameter of drogue
+  -cD CHUTED, --chuteD CHUTED
+                        diameter of main chute
+  -ot OPENTIME, --opentime OPENTIME
+                        assuming chute opens linearly, what is the duration is
+                        secs
+```
 
 Please message me if you have other suggestions
 
