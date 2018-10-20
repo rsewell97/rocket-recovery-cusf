@@ -17,84 +17,16 @@ def getAtmDensity(alt):          #returns atmospheric density as a function of a
         pressure = 101.29 * ((temp + 273.1)/288.08) ** (5.256)
     return pressure / (0.2869*(temp + 273.1))
 
-def getWind(arguments):             #use balloon descent API to extract x,y position during ascent
-    url = 'http://predict.cusf.co.uk/api/v1/?'  #.format(host=socket.gethostbyname("predict.cusf.co.uk"))
-    for arg, value in arguments.items():
-        url += arg + '=' + str(value) + '&'
-    print(url)
-    response = requests.get(url)
-    json_data = json.loads(response.text)
-    # print(json.dumps(json_data,indent=4),url)
-
-    data = []
-    for item in (x for x in json_data['prediction'] if x['stage'] == 'descent'):
-        inilon, inilat = item['trajectory'][0]['longitude'], item['trajectory'][0]['latitude']  #normalise coordinate system
-        # print(init_time)
-        for des in item['trajectory']:
-
-            lat = des['latitude']-inilat              #normalise from apogee
-            lon = des['longitude']-inilon
-            
-            x = (6371000+des['altitude'])*np.sin(np.deg2rad(lon))       #sin(x) = x, 6371000m=radius of earth
-            y = (6371000+des['altitude'])*np.sin(np.deg2rad(lat))
-            data.append([x,y,des['altitude']])
-
-    return np.asarray(data, dtype='float32')  #array in form [x,y,altitude] over time -> need to interpolate
-
-def addWind(positions,dt,chute_deploy_time,mypos=geocoder.ip('me').latlng,launch_date=time.time()):    #add wind component to both stages
-    launch_date = datetime.datetime.fromtimestamp(launch_date).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    if mypos[0] > 90 or mypos[0] < -90:
-        raise ValueError('Latitude out of bounds')
-    if dt < 0:
-        raise ValueError("Can't have negative time step")
-    if chute_deploy_time > len(positions)/dt:
-        print("Main parachute didn't open")
-
-    info = {                                    #see http://tawhiri.cusf.co.uk/en/latest/api.html for details
-        "profile": "standard_profile",
-        "launch_latitude": mypos[0],
-        "launch_longitude": mypos[1],
-        "launch_datetime": launch_date,
-        "ascent_rate": 450,
-    }
-    chute_deploy_time = np.clip(chute_deploy_time,0,len(positions)/dt)
-    index_chute_opens = int(chute_deploy_time/dt)
-
-    #wind displacement before chute opens
-    info['burst_altitude'] = positions[0,2]
-    info['descent_rate'] = (positions[0,2] - positions[index_chute_opens,2] )/ chute_deploy_time
-    wind = getWind(info)
-    xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False, fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
-    ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
-    wind_disp1 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
-    last_val = wind_disp1[-1]
-    wind_disp1 = np.vstack((wind_disp1,np.zeros((len(positions)-len(wind_disp1),3))))
-
-
-    #wind displacement after chute opens
-    info['descent_rate'] = positions[index_chute_opens,2] / (elapsed_time - chute_deploy_time)
-    info['burst_altitude'] = positions[index_chute_opens,2]
-    wind = getWind(info)
-    xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
-    ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
-
-    wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
-    wind_disp2 = np.vstack((np.zeros((len(positions)-len(wind_disp2),3)),np.add(wind_disp2,np.subtract(last_val,wind_disp2[0])))) 
-
-    wind = np.add(wind_disp1,wind_disp2) * 1.0      #factor sets wind effect relative to 2kg balloon payload
-
-    return np.add(positions,wind)                   #overestimate on displacement as model is designed for low-mass balloon models
-
 parser = argparse.ArgumentParser()
 parser.add_argument('-ia','--initalt',default=15000,type=float,help='apogee altitude')
-parser.add_argument('-t','--dt',default=0.05,type=float,help='time step')
-parser.add_argument('-m','--mass',default=50,type=float,help='dry mass at apogee')
+parser.add_argument('-t','--dt',default=0.05,       type=float,help='time step')
+parser.add_argument('-m','--mass',default=50,       type=float,help='dry mass at apogee')
 parser.add_argument('-v','--velocity',default=[0,0,0],type=list,help='initial velocity at apogee')
+parser.add_argument('-l','--location',default=geocoder.ip('me').latlng,type=list,help='initial launch lat long, as list')
 parser.add_argument('-da','--deployalt',default=1500,type=float,help='altitude main chute opens')
-parser.add_argument('-dD','--drogueD',default=0.9,type=float,help='diameter of drogue')
-parser.add_argument('-cD','--chuteD',default=4.86,type=float,help='diameter of main chute')
-parser.add_argument('-ot','--opentime',default=2,type=float,help='assuming chute opens linearly, what is the duration is secs')
+parser.add_argument('-dD','--drogueD',default=0.9   ,type=float,help='diameter of drogue')
+parser.add_argument('-cD','--chuteD',default=4.86   ,type=float,help='diameter of main chute')
+parser.add_argument('-ot','--opentime',default=2    ,type=float,help='assuming chute opens linearly, what is the duration is secs')
 
 args = parser.parse_args()
 
@@ -107,6 +39,7 @@ chute_deployment_altitude = args.deployalt  #m
 drogue_area = np.pi * (args.drogueD/2)**2   #m^2
 chute_area = np.pi * (args.chuteD/2)**2     #m^2
 chute_deployment_duration = args.opentime   #s     assume chute opens linearly - work around but pretty good estimate
+location = args.location                    #[lat,lon]
 drogue_drag_coeff = 2.2                     #perhaps optimistic
 chute_drag_coeff = 2.2                      #perhaps optimistic
 
@@ -161,7 +94,80 @@ while position[2] > 0:                  #run iteration
 
     elapsed_time += dt
 
-positions = addWind(positions,dt,chute_deploy_time)
+
+def getWind(arguments):             #use balloon descent API to extract x,y position during ascent
+    url = 'http://predict.cusf.co.uk/api/v1/?'  #.format(host=socket.gethostbyname("predict.cusf.co.uk"))
+    for arg, value in arguments.items():
+        url += arg + '=' + str(value) + '&'
+    print(url)
+    response = requests.get(url)
+    json_data = json.loads(response.text)
+    # print(json.dumps(json_data,indent=4),url)
+
+    data = []
+    for item in (x for x in json_data['prediction'] if x['stage'] == 'descent'):
+        inilon, inilat = item['trajectory'][0]['longitude'], item['trajectory'][0]['latitude']  #normalise coordinate system
+        # print(init_time)
+        for des in item['trajectory']:
+
+            lat = des['latitude']-inilat              #normalise from apogee
+            lon = des['longitude']-inilon
+            
+            x = (6371000+des['altitude'])*np.sin(np.deg2rad(lon))       #sin(x) = x, 6371000m=radius of earth
+            y = (6371000+des['altitude'])*np.sin(np.deg2rad(lat))
+            data.append([x,y,des['altitude']])
+
+    return np.asarray(data, dtype='float32')  #array in form [x,y,altitude] over time -> need to interpolate
+
+def addWind(positions,dt,chute_deploy_time,mypos,launch_date=time.time()):    #add wind component to both stages
+    launch_date = datetime.datetime.fromtimestamp(launch_date).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    if mypos[0] > 90 or mypos[0] < -90:
+        raise ValueError('Latitude out of bounds')
+    if mypos[1] < 0 or mypos[1] > 360:
+        mypos[1] = mypos[1] % 360
+
+    if dt < 0:
+        raise ValueError("Can't have negative time step")
+    if chute_deploy_time > len(positions)/dt:
+        print("Main parachute didn't open")
+
+    info = {                                    #see http://tawhiri.cusf.co.uk/en/latest/api.html for details
+        "profile": "standard_profile",
+        "launch_latitude": mypos[0],
+        "launch_longitude": mypos[1],
+        "launch_datetime": launch_date,
+        "ascent_rate": 450,
+    }
+    chute_deploy_time = np.clip(chute_deploy_time,0,len(positions)/dt)
+    index_chute_opens = int(chute_deploy_time/dt)
+
+    #wind displacement before chute opens
+    info['burst_altitude'] = positions[0,2]
+    info['descent_rate'] = (positions[0,2] - positions[index_chute_opens,2] )/ chute_deploy_time
+    wind = getWind(info)
+    xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False, fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
+    ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
+    wind_disp1 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
+    last_val = wind_disp1[-1]
+    wind_disp1 = np.vstack((wind_disp1,np.zeros((len(positions)-len(wind_disp1),3))))
+
+
+    #wind displacement after chute opens
+    info['descent_rate'] = positions[index_chute_opens,2] / (elapsed_time - chute_deploy_time)
+    info['burst_altitude'] = positions[index_chute_opens,2]
+    wind = getWind(info)
+    xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
+    ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
+
+    wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
+    wind_disp2 = np.vstack((np.zeros((len(positions)-len(wind_disp2),3)),np.add(wind_disp2,np.subtract(last_val,wind_disp2[0])))) 
+
+    wind = np.add(wind_disp1,wind_disp2) * 1.0      #factor sets wind effect relative to 2kg balloon payload
+
+    return np.add(positions,wind)                   #overestimate on displacement as model is designed for low-mass balloon models
+positions = addWind(positions,dt,chute_deploy_time,mypos=location)
+
 
 def dataRelease(how='basic',what=[positions,velocities,accelerations]):
     if how == 'basic':
