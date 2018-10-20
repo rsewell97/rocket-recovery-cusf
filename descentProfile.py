@@ -1,10 +1,10 @@
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import socket, requests, json, datetime, time, geocoder, math, argparse
+import socket, requests, json, datetime, time, geocoder, math, argparse, sys
 from scipy import interpolate
 
-def getAtmDensity(alt):          #returns atmospheric density as a function of altitude
+def getAtmDensity(alt):         #returns atmospheric density as a function of altitude
     temp = pressure = 0.0           #see https://www.grc.nasa.gov/WWW/K-12/airplane/atmosmet.html
     if alt > 25000:
         temp = -131.21 + 0.00299 * alt
@@ -17,29 +17,41 @@ def getAtmDensity(alt):          #returns atmospheric density as a function of a
         pressure = 101.29 * ((temp + 273.1)/288.08) ** (5.256)
     return pressure / (0.2869*(temp + 273.1))
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-ia','--initalt',default=15000,type=float,help='apogee altitude')
-parser.add_argument('-t','--dt',default=0.05,       type=float,help='time step')
-parser.add_argument('-m','--mass',default=50,       type=float,help='dry mass at apogee')
-parser.add_argument('-v','--velocity',default=[0,0,0],type=list,help='initial velocity at apogee')
-parser.add_argument('-l','--location',default=geocoder.ip('me').latlng,type=list,help='initial launch lat long, as list')
-parser.add_argument('-da','--deployalt',default=1500,type=float,help='altitude main chute opens')
-parser.add_argument('-dD','--drogueD',default=0.9   ,type=float,help='diameter of drogue')
-parser.add_argument('-cD','--chuteD',default=4.86   ,type=float,help='diameter of main chute')
-parser.add_argument('-ot','--opentime',default=2    ,type=float,help='assuming chute opens linearly, what is the duration is secs')
+if len(sys.argv) != 1:          #will only do this if you specify any command line arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-ia','--initalt',default=15000,type=float,help='apogee altitude')
+    parser.add_argument('-t','--dt',default=0.05,       type=float,help='time step')
+    parser.add_argument('-m','--mass',default=50,       type=float,help='dry mass at apogee')
+    parser.add_argument('-v','--velocity',default=[0,0,0],type=list,help='initial velocity at apogee')
+    parser.add_argument('-l','--location',default=geocoder.ip('me').latlng,type=list,help='initial launch [lat, long], as list')
+    parser.add_argument('-da','--deployalt',default=1500,type=float,help='altitude main chute opens')
+    parser.add_argument('-dD','--drogueD',default=0.9   ,type=float,help='diameter of drogue')
+    parser.add_argument('-cD','--chuteD',default=4.86   ,type=float,help='diameter of main chute')
+    parser.add_argument('-ot','--opentime',default=2    ,type=float,help='assuming chute opens linearly, what is the duration is secs')
+    a = parser.parse_args()
 
-args = parser.parse_args()
+    #command line > local vars
+    initalt = a.initalt
+    dt = a.dt
+    dry_mass = a.mass
+    velocity = np.array(a.velocity, dtype='float32')   #m/s
+    location = a.location
+    chute_deploy_altitude = a.deployalt
+    drogue_area = np.pi * (a.drogueD/2)**2   #m^2
+    chute_area = np.pi * (a.chuteD/2)**2     #m^2
+    chute_open_duration = a.opentime
+else:
+    #input parameters can be easily manually changed here
+    initalt = 15000
+    dt = 0.03
+    dry_mass = 52
+    velocity = np.array([0,0,0], dtype='float32')   #m/s
+    location = geocoder.ip('me').latlng
+    chute_deploy_altitude = 1500
+    drogue_area = np.pi * (0.45)**2         #m^2
+    chute_area = np.pi * (2.43)**2          #m^2
+    chute_open_duration = 2
 
-#input parameters
-init_alt = args.initalt
-velocity = np.array(args.velocity, dtype='float32')   #m/s
-dt = args.dt                                #s
-dry_mass = args.mass                        #kg
-chute_deployment_altitude = args.deployalt  #m
-drogue_area = np.pi * (args.drogueD/2)**2   #m^2
-chute_area = np.pi * (args.chuteD/2)**2     #m^2
-chute_deployment_duration = args.opentime   #s     assume chute opens linearly - work around but pretty good estimate
-location = args.location                    #[lat,lon]
 drogue_drag_coeff = 2.2                     #perhaps optimistic
 chute_drag_coeff = 2.2                      #perhaps optimistic
 
@@ -47,7 +59,7 @@ chute_drag_coeff = 2.2                      #perhaps optimistic
 drogue_open = 1                         #initially deployed at apogee (start)          
 chute_open = 0                          #initially not deployed
 elapsed_time = 0                        #used to extract event timings
-position = np.array([0,0,init_alt], dtype='float32')    #m
+position = np.array([0,0,initalt], dtype='float32')    #m
 positions = np.array([position])
 velocities = np.array([velocity])
 accelerations = np.array([0,0,0])       #initially experiencing 'zero-G'
@@ -63,8 +75,8 @@ while position[2] > 0:                  #run iteration
     else:
         unit_velocity = velocity
 
-    if position[2] < chute_deployment_altitude and chute_open < 1:
-        chute_open += dt/chute_deployment_duration      #assume chute opens linearly
+    if position[2] < chute_deploy_altitude and chute_open < 1:
+        chute_open += dt/chute_open_duration      #assume chute opens linearly
         chute_deploy_time = elapsed_time
         drogue_open = 0
 
@@ -167,7 +179,6 @@ def addWind(positions,dt,chute_deploy_time,mypos,launch_date=time.time()):    #a
 
     return np.add(positions,wind)                   #overestimate on displacement as model is designed for low-mass balloon models
 positions = addWind(positions,dt,chute_deploy_time,mypos=location)
-
 
 def dataRelease(how='basic',what=[positions,velocities,accelerations]):
     if how == 'basic':

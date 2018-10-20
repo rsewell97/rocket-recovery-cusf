@@ -1,6 +1,0 @@
-matplotlib
-numpy
-requests
-datetime
-geocoder
-scipy
