@@ -44,16 +44,16 @@ else:
     #input parameters can be easily manually changed here
     initalt = 15000
     dt = 0.03
-    dry_mass = 52
+    dry_mass = 50
     velocity = np.array([0,0,0], dtype='float32')   #m/s
-    location = geocoder.ip('me').latlng
-    chute_deploy_altitude = 1500
+    location = geocoder.maxmind('me').latlng
+    chute_deploy_altitude = 2000
     drogue_area = np.pi * (0.45)**2         #m^2
-    chute_area = np.pi * (2.43)**2          #m^2
+    chute_area = np.pi * (2.13)**2          #m^2
     chute_open_duration = 2
 
-drogue_drag_coeff = 2.2                     #perhaps optimistic
-chute_drag_coeff = 2.2                      #perhaps optimistic
+drogue_drag_coeff = 2.1                     #approx
+chute_drag_coeff = 2.1                      #actual Iris 162" chute
 
 #initialise simulation
 drogue_open = 1                         #initially deployed at apogee (start)          
