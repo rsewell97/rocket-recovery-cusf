@@ -1,23 +1,43 @@
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
-import socket, requests, json, datetime, time, geocoder, math, argparse, sys
+import requests, json, datetime, time, geocoder, argparse, sys
 from scipy import interpolate
 
+class Parachute:
+    def __init__(self, name, deployalt, D, m, rated_load=1000, Cd=2.1, L=2):
+        self.name = str(name)           #name for graphical purposes
+        self.deployalt = deployalt      #Deploy aly /m
+        self.area = 0.25*np.pi*D**2     #Diameter of chute /m
+        self.mass = m                   #mass of chute /kg
+        self.Cd = Cd                    #Coefficient of drag, Fruity chutes approx 2.1
+        self.open = 0                   #only used for simple model
+        self.lost = False               #tracking if next parachute has opened
+        self.deploytime = -1            #time parachute deploys
+        self.duration = 1               #simply for graphical puropses
+        self.discardtime = -1           #time next parachute opens
+        self.rated_load = rated_load    #in lbs - CAUTION
+        self.length = L                 #length of shock cord
+        self.forces = np.array([0])
+
+drogue = Parachute("Drogue",15000,0.9,0.21)
+main = Parachute("Main",2000,4.26,1.7)
+parachutes = [drogue,main]
+
 def getAtmDensity(alt):         #returns atmospheric density as a function of altitude
-    temp = pressure = 0.0           #see https://www.grc.nasa.gov/WWW/K-12/airplane/atmosmet.html
+    temp = pressure = 0         #see https://www.grc.nasa.gov/WWW/K-12/airplane/atmosmet.html
     if alt > 25000:
         temp = -131.21 + 0.00299 * alt
         pressure = 2.488 * ((temp + 273.1)/(216.6)) ** (-11.388)
     elif 11000 < alt <= 25000:
         temp = -56.46
-        pressure = 22.65 * math.exp(1.73 - 0.000157 * alt)
+        pressure = 22.65 * np.exp(1.73 - 0.000157 * alt)
     else:
         temp = 15.04 - 0.00649 * alt
         pressure = 101.29 * ((temp + 273.1)/288.08) ** (5.256)
     return pressure / (0.2869*(temp + 273.1))
 
-if len(sys.argv) != 1:          #will only do this if you specify any command line arguments
+if len(sys.argv) != 1:      #will only perform if command line arguments specified
     parser = argparse.ArgumentParser()
     parser.add_argument('-ia','--initalt',default=15000,type=float,help='apogee altitude')
     parser.add_argument('-t','--dt',default=0.05,       type=float,help='time step')
@@ -41,70 +61,67 @@ if len(sys.argv) != 1:          #will only do this if you specify any command li
     chute_area = np.pi * (a.chuteD/2)**2     #m^2
     chute_open_duration = a.opentime
 else:
-    #input parameters can be easily manually changed here
+    #input parameters can be debuggd easily here
     initalt = 15000
     dt = 0.03
     dry_mass = 50
-    velocity = np.array([0,0,0], dtype='float32')   #m/s
-    location = geocoder.maxmind('me').latlng
-    chute_deploy_altitude = 2000
-    drogue_area = np.pi * (0.45)**2         #m^2
-    chute_area = np.pi * (2.13)**2          #m^2
-    chute_open_duration = 2
-
-drogue_drag_coeff = 2.1                     #approx
-chute_drag_coeff = 2.1                      #actual Iris 162" chute
+    velocity = np.array([100,0,0], dtype='float32')   #m/s
+    location = [52.202541,0.131240]     #geocoder.maxmind('me').latlng - I used all my free quota lol
 
 #initialise simulation
-drogue_open = 1                         #initially deployed at apogee (start)          
-chute_open = 0                          #initially not deployed
 elapsed_time = 0                        #used to extract event timings
 position = np.array([0,0,initalt], dtype='float32')    #m
 positions = np.array([position])
 velocities = np.array([velocity])
 accelerations = np.array([0,0,0])       #initially experiencing 'zero-G'
-drogue_force = np.array([0])            #likewise
-chute_force = np.array([0])             #likewise
 
+print("Simulation initialised")
 while position[2] > 0:                  #run iteration
     force_sum = np.array([0,0,-dry_mass*9.81], dtype='float32') #N
     rho = getAtmDensity(position[2])
 
-    if np.sqrt((np.sum(velocity**2))) != 0:     #check if velocity != [0,0,0]
+    if np.sqrt((np.sum(velocity**2))) != 0:     #check if velocity = [0,0,0]
         unit_velocity = (velocity / np.sqrt((np.sum(velocity**2))))
     else:
         unit_velocity = velocity
 
-    if position[2] < chute_deploy_altitude and chute_open < 1:
-        chute_open += dt/chute_open_duration      #assume chute opens linearly
-        chute_deploy_time = elapsed_time
-        drogue_open = 0
+    for i, parachute in enumerate(parachutes):
+        if position[2] <= parachute.deployalt and parachute.open < 1 and parachute.lost == False:
+            if parachute.open == 0:
+                parachute.deploytime = elapsed_time
 
-    #drogue mechanics
-    d_drag = drogue_open*0.5*drogue_drag_coeff*drogue_area*rho*np.linalg.norm(velocity)**2
-    force_sum -= d_drag*unit_velocity
-    drogue_force = np.vstack((drogue_force,[d_drag]))
+                for j, chute in enumerate(parachutes[:i]):
+                    chute.lost = True
+                    chute.open = 0
+                    chute.discardtime = elapsed_time
+                    
+            parachute.open += dt/parachute.duration      #assume chute opens linearly
+    
 
-    #parachute mechanics
-    c_drag = chute_open*0.5*chute_drag_coeff*chute_area*rho*np.linalg.norm(velocity)**2
-    force_sum -= c_drag*unit_velocity
-    chute_force = np.vstack((chute_force,[c_drag]))
+        #chute mechanics
+        drag = parachute.open*0.5*parachute.Cd*parachute.area*rho*np.linalg.norm(velocity)**2
+        force_sum -= drag*unit_velocity
+        parachute.forces = np.append(parachute.forces,drag)
 
-    #rocket drag mechanics
+    #rocket drag
     rocket_drag = 0.5*0.82*np.pi*0.178**2*rho*np.linalg.norm(velocity)**2
                 #0.5 * drag coeff of long cyliner * cross sectional area * density * v^2
     force_sum -= rocket_drag * unit_velocity
 
-    #linear mechanics
+    #mechanics
     accel = force_sum/dry_mass
     velocity += accel * dt
     position += velocity * dt
-
     positions = np.vstack((positions,position))
     velocities = np.vstack((velocities,velocity))
     accelerations = np.vstack((accelerations,accel))
 
     elapsed_time += dt
+
+parachutes[-1].discardtime = elapsed_time
+for parachute in parachutes:
+    parachute.index_opens = int(parachute.deploytime/dt)
+    parachute.index_lose = int(parachute.discardtime/dt)
 
 
 def getWind(arguments):             #use balloon descent API to extract x,y position during ascent
@@ -131,7 +148,8 @@ def getWind(arguments):             #use balloon descent API to extract x,y posi
 
     return np.asarray(data, dtype='float32')  #array in form [x,y,altitude] over time -> need to interpolate
 
-def addWind(positions,dt,chute_deploy_time,mypos,launch_date=time.time()):    #add wind component to both stages
+def addWind(positions,dt,deploytime,mypos,launch_date=time.time()):    #add wind component to both stages
+    print("Simulation finished, adding wind")
     launch_date = datetime.datetime.fromtimestamp(launch_date).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     if mypos[0] > 90 or mypos[0] < -90:
@@ -141,7 +159,7 @@ def addWind(positions,dt,chute_deploy_time,mypos,launch_date=time.time()):    #a
 
     if dt < 0:
         raise ValueError("Can't have negative time step")
-    if chute_deploy_time > len(positions)/dt:
+    if deploytime > len(positions)/dt:
         print("Main parachute didn't open")
 
     info = {                                    #see http://tawhiri.cusf.co.uk/en/latest/api.html for details
@@ -151,51 +169,49 @@ def addWind(positions,dt,chute_deploy_time,mypos,launch_date=time.time()):    #a
         "launch_datetime": launch_date,
         "ascent_rate": 450,
     }
-    chute_deploy_time = np.clip(chute_deploy_time,0,len(positions)/dt)
-    index_chute_opens = int(chute_deploy_time/dt)
+    deploytime = np.clip(deploytime,0,len(positions)/dt)
+    index_chute_opens = int(deploytime/dt)
 
     #wind displacement before chute opens
-    info['burst_altitude'] = positions[0,2]
-    info['descent_rate'] = (positions[0,2] - positions[index_chute_opens,2] )/ chute_deploy_time
-    wind = getWind(info)
-    xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False, fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
-    ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[:index_chute_opens,2]).reshape(-1,1)
-    wind_disp1 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
-    last_val = wind_disp1[-1]
-    wind_disp1 = np.vstack((wind_disp1,np.zeros((len(positions)-len(wind_disp1),3))))
+    tmp = []
+    for i, parachute in enumerate(parachutes):
+        info['burst_altitude'] = positions[parachute.index_opens,2]
+        info['descent_rate'] = -(positions[parachute.index_opens,2] - positions[parachute.index_lose,2] ) / (parachute.deploytime - parachute.discardtime)
 
+        wind = getWind(info)
+        xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False, fill_value='extrapolate',kind='quadratic')(positions[parachute.index_opens:parachute.index_lose,2]).reshape(-1,1)
+        ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[parachute.index_opens:parachute.index_lose,2]).reshape(-1,1)  
+        wind_disp = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
+        tmp.append(wind_disp)
+        if i != 0:
+            tmp[i] += last_val 
+        last_val = wind_disp[-1]
+    
+    wind_displacements = np.vstack((i for i in tmp))
+    wind_displacements = np.vstack((wind_displacements,[last_val,last_val]))
 
-    #wind displacement after chute opens
-    info['descent_rate'] = positions[index_chute_opens,2] / (elapsed_time - chute_deploy_time)
-    info['burst_altitude'] = positions[index_chute_opens,2]
-    wind = getWind(info)
-    xs = interpolate.interp1d(wind[:,2],wind[:,0],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
-    ys = interpolate.interp1d(wind[:,2],wind[:,1],bounds_error=False,fill_value='extrapolate',kind='quadratic')(positions[index_chute_opens:,2]).reshape(-1,1)
+    return np.add(positions,wind_displacements)                   #overestimate on displacement as model is designed for low-mass balloon models
+positions = addWind(positions,dt,main.deploytime,mypos=location)
 
-    wind_disp2 = np.hstack((np.hstack((xs,ys)),np.zeros_like(xs)))      #manipulate shape for addition
-    wind_disp2 = np.vstack((np.zeros((len(positions)-len(wind_disp2),3)),np.add(wind_disp2,np.subtract(last_val,wind_disp2[0])))) 
+def getShockForces(velocities=velocities):  #assumes canopy mass << dry mass
+    for parachute in parachutes:
+        ult_tensile_strain = 0.02   #of nylon
 
-    wind = np.add(wind_disp1,wind_disp2) * 1.0      #factor sets wind effect relative to 2kg balloon payload
+        k = (parachute.rated_load*0.454) / (parachute.length * ult_tensile_strain)
+        parachute.max_force = np.linalg.norm(velocities[parachute.index_opens])*(k*main.mass)**0.5
 
-    return np.add(positions,wind)                   #overestimate on displacement as model is designed for low-mass balloon models
-positions = addWind(positions,dt,chute_deploy_time,mypos=location)
+    return
+getShockForces()
 
 def dataRelease(how='basic',what=[positions,velocities,accelerations]):
     if how == 'basic':
-        print("""
-        --------------------
-        Landing Speed: {speed} m/s
-        Landing dist: {distance} m
-        Chute Shock Force: {shock} N
-        Drogue Max Force: {drogue_max} N
-        Maximum acceleration: {max_a} m/s^2 or {g}G
-        --------------------
-        """.format(speed=round(-float(velocity[2]),2),
-        distance=round(np.linalg.norm(positions[-1])),
-        shock=round(np.max(chute_force),2),
-        drogue_max=round(np.max(drogue_force),2),
-        max_a=round(np.max(accelerations[:,2]),2),
-        g=round(np.max(accelerations[:,2]/9.81),2)))
+        print("""\n--------------------\nLanding Speed: {speed} m/s\nLanding dist: {distance} m""".format(speed=round(-float(velocity[2]),2),distance=round(np.linalg.norm(positions[-1]))))
+        try:
+            for i in parachutes:
+                print("{} Shock Force: {} N".format(i.name,round(i.max_force,2)))
+        except AttributeError:
+            pass
+        print("--------------------")
     
     elif how == 'writetofile':
         np.savez('descent.npz', what)
@@ -206,7 +222,7 @@ def dataRelease(how='basic',what=[positions,velocities,accelerations]):
     return
 dataRelease()
 
-def plotAll(total_time,pos3d=positions,vel=velocities,acc=accelerations,d_f=drogue_force,c_f=chute_force):       #plot everything
+def plotAll(total_time,pos3d=positions,vel=velocities,acc=accelerations,tensions=parachutes):       #plot everything
      
     t = np.linspace(0,total_time,len(positions),dtype='float32')
     fig = plt.figure()
@@ -228,8 +244,9 @@ def plotAll(total_time,pos3d=positions,vel=velocities,acc=accelerations,d_f=drog
 
     ax = fig.add_subplot(2, 2, 4)
     ax.set_title('Line Tensions')
-    ax.plot(t,d_f)
-    ax.plot(t,c_f)
+    for i in tensions:
+        ax.plot(t,i.forces,label=i.name)
+    ax.legend()
 
     fig.tight_layout()
     plt.show()
