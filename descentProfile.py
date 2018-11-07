@@ -5,7 +5,7 @@ import requests, json, datetime, time, geocoder, argparse, sys
 from scipy import interpolate
 
 class Parachute:
-    def __init__(self, name, deployalt, D, m, rated_load=1000, Cd=2.1, L=2):
+    def __init__(self, name, deployalt, D, m, rated_load=2400, Cd=2.1, L=5):
         self.name = str(name)           #name for graphical purposes
         self.deployalt = deployalt      #Deploy aly /m
         self.area = 0.25*np.pi*D**2     #Diameter of chute /m
@@ -195,10 +195,10 @@ positions = addWind(positions,dt,main.deploytime,mypos=location)
 
 def getShockForces(velocities=velocities):  #assumes canopy mass << dry mass
     for parachute in parachutes:
-        ult_tensile_strain = 0.02   #of nylon
+        ult_tensile_strain = 0.015   #of nylon
 
         k = (parachute.rated_load*0.454) / (parachute.length * ult_tensile_strain)
-        parachute.max_force = np.linalg.norm(velocities[parachute.index_opens])*(k*main.mass)**0.5
+        parachute.max_force = np.linalg.norm(velocities[parachute.index_opens])*np.sqrt(k*parachute.mass*dry_mass/(dry_mass+parachute.mass))
 
     return
 getShockForces()
