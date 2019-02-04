@@ -5,23 +5,28 @@ import requests, json, datetime, time, geocoder, argparse, sys
 from scipy import interpolate
 
 class Parachute:
-    def __init__(self, name, deployalt, D, m, rated_load=2400, Cd=2.1, L=5):
+    def __init__(self, name, deployalt, D, m, rated_load=2400, Cd=2.1, L=2):
+        #chute params
         self.name = str(name)           #name for graphical purposes
         self.deployalt = deployalt      #Deploy aly /m
-        self.area = 0.25*np.pi*D**2     #Diameter of chute /m
+        self.area = 0.25*np.pi*(0.0254*D)**2     #Diameter of chute /inches
         self.mass = m                   #mass of chute /kg
         self.Cd = Cd                    #Coefficient of drag, Fruity chutes approx 2.1
+
+        #shock cord params
+        self.rated_load = rated_load*0.454  #in lbs - CAUTION
+        self.length = L                 #length of shock cord
+
+        #sim aids
         self.open = 0                   #only used for simple model
         self.lost = False               #tracking if next parachute has opened
         self.deploytime = -1            #time parachute deploys
-        self.duration = 1               #simply for graphical puropses
+        self.duration = 0.3             #in secs, note shock force on graph is unreliable
         self.discardtime = -1           #time next parachute opens
-        self.rated_load = rated_load    #in lbs - CAUTION
-        self.length = L                 #length of shock cord
         self.forces = np.array([0])
 
-drogue = Parachute("Drogue",15000,0.9,0.21)
-main = Parachute("Main",2000,4.26,1.7)
+drogue = Parachute("Drogue",15000,D=36,m=0.17,rated_load=2400,L=4)
+main = Parachute("Main",2000,D=168,m=1.7,rated_load=800,L=1)
 parachutes = [drogue,main]
 
 def getAtmDensity(alt):         #returns atmospheric density as a function of altitude
@@ -97,7 +102,6 @@ while position[2] > 0:                  #run iteration
                     
             parachute.open += dt/parachute.duration      #assume chute opens linearly
     
-
         #chute mechanics
         drag = parachute.open*0.5*parachute.Cd*parachute.area*rho*np.linalg.norm(velocity)**2
         force_sum -= drag*unit_velocity
@@ -193,11 +197,11 @@ def addWind(positions,dt,deploytime,mypos,launch_date=time.time()):    #add wind
     return np.add(positions,wind_displacements)                   #overestimate on displacement as model is designed for low-mass balloon models
 positions = addWind(positions,dt,main.deploytime,mypos=location)
 
-def getShockForces(velocities=velocities):  #assumes canopy mass << dry mass
+def getShockForces(velocities=velocities):  #assumes chute is stationary during tension - drogue deployment in low density....
     for parachute in parachutes:
         ult_tensile_strain = 0.015   #of nylon
 
-        k = (parachute.rated_load*0.454) / (parachute.length * ult_tensile_strain)
+        k = parachute.rated_load / (parachute.length * ult_tensile_strain)
         parachute.max_force = np.linalg.norm(velocities[parachute.index_opens])*np.sqrt(k*parachute.mass*dry_mass/(dry_mass+parachute.mass))
 
     return
@@ -246,6 +250,8 @@ def plotAll(total_time,pos3d=positions,vel=velocities,acc=accelerations,tensions
     ax.set_title('Line Tensions')
     for i in tensions:
         ax.plot(t,i.forces,label=i.name)
+        ax.axhline(y=i.max_force,xmin=i.deploytime/elapsed_time,xmax=i.discardtime/elapsed_time,ls='dashed',c=np.random.rand(3,))
+        # ax.axhline(y=i.rated_load,xmin=i.deploytime/elapsed_time,xmax=i.discardtime/elapsed_time,ls='dotted',c=np.random.rand(3,))
     ax.legend()
 
     fig.tight_layout()
